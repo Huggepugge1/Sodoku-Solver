@@ -1,9 +1,11 @@
 use gtk::prelude::*;
 use gtk::{
-    gdk, gio::File, glib, Application, ApplicationWindow, Button, CssProvider, Entry, Frame, Grid,
+    gdk, gio::File, glib, Application, ApplicationWindow, Button, ButtonsType, CssProvider, Entry,
+    Frame, Grid, MessageDialog, MessageType,
 };
 use gtk4 as gtk;
 
+mod cell;
 mod sudoku;
 
 use core::cell::RefCell;
@@ -18,57 +20,9 @@ fn get_sudoku(grid: &Grid) -> Result<sudoku::Sudoku, ParseIntError> {
     for _ in 0..81 {
         squares.push(0);
     }
-    for outer_i in 0..3 {
-        for outer_j in 0..3 {
-            let inner_grid = match grid.child_at(outer_i, outer_j) {
-                Some(grid) => match grid.downcast_ref::<Frame>() {
-                    Some(frame) => match frame.child() {
-                        Some(frame) => match frame.downcast_ref::<Grid>() {
-                            Some(grid) => grid,
-                            None => unreachable!(),
-                        }
-                        .clone(),
-                        None => unreachable!(),
-                    },
-                    None => unreachable!(),
-                },
-                None => unreachable!(),
-            };
-            for inner_i in 0..3 {
-                for inner_j in 0..3 {
-                    let number = match inner_grid.child_at(inner_i, inner_j) {
-                        Some(entry) => match entry.downcast_ref::<Entry>() {
-                            Some(entry) => entry.text(),
-                            None => unreachable!(),
-                        },
-                        None => unreachable!(),
-                    };
-                    squares[(outer_i * 3 + outer_j * 3 * 9 + inner_i + inner_j * 9) as usize] =
-                        match number.parse() {
-                            Ok(n) => n,
-                            Err(e) => {
-                                let e: ParseIntError = e;
-                                match e.kind() {
-                                    IntErrorKind::Empty => 0,
-                                    _ => return Err(e),
-                                }
-                            }
-                        };
-                }
-            }
-        }
-    }
-    Ok(sudoku::Sudoku { squares })
-}
-
-fn set_sudoku(grid: &Grid, sudoku: sudoku::Sudoku) {
-    let mut squares = Vec::with_capacity(81);
-    for _ in 0..81 {
-        squares.push(0);
-    }
     for outer_row in 0..3 {
         for outer_col in 0..3 {
-            let inner_grid = match grid.child_at(outer_row, outer_col) {
+            let inner_grid = match grid.child_at(outer_col, outer_row) {
                 Some(grid) => match grid.downcast_ref::<Frame>() {
                     Some(frame) => match frame.child() {
                         Some(frame) => match frame.downcast_ref::<Grid>() {
@@ -84,16 +38,71 @@ fn set_sudoku(grid: &Grid, sudoku: sudoku::Sudoku) {
             };
             for inner_row in 0..3 {
                 for inner_col in 0..3 {
-                    match inner_grid.child_at(inner_row, inner_col) {
+                    let number = match inner_grid.child_at(inner_col, inner_row) {
+                        Some(entry) => match entry.downcast_ref::<Entry>() {
+                            Some(entry) => entry.text(),
+                            None => unreachable!(),
+                        },
+                        None => unreachable!(),
+                    };
+                    squares[sudoku::Sudoku::get_position(
+                        cell::CellPosition::new(outer_row as usize, outer_col as usize),
+                        cell::CellPosition::new(inner_row as usize, inner_col as usize),
+                    )] = match number.parse() {
+                        Ok(n) => n,
+                        Err(e) => {
+                            let e: ParseIntError = e;
+                            match e.kind() {
+                                IntErrorKind::Empty => 0,
+                                _ => return Err(e),
+                            }
+                        }
+                    };
+                }
+            }
+        }
+    }
+    Ok(sudoku::Sudoku { squares })
+}
+
+fn set_sudoku(grid: &Grid, sudoku: sudoku::Sudoku) {
+    let mut squares = Vec::with_capacity(81);
+    for _ in 0..81 {
+        squares.push(0);
+    }
+    for outer_row in 0..3 {
+        for outer_col in 0..3 {
+            let inner_grid = match grid.child_at(outer_col, outer_row) {
+                Some(grid) => match grid.downcast_ref::<Frame>() {
+                    Some(frame) => match frame.child() {
+                        Some(frame) => match frame.downcast_ref::<Grid>() {
+                            Some(grid) => grid,
+                            None => unreachable!(),
+                        }
+                        .clone(),
+                        None => unreachable!(),
+                    },
+                    None => unreachable!(),
+                },
+                None => unreachable!(),
+            };
+            for inner_row in 0..3 {
+                for inner_col in 0..3 {
+                    match inner_grid.child_at(inner_col, inner_row) {
                         Some(entry) => match entry.downcast_ref::<Entry>() {
                             Some(entry) => {
                                 entry.set_text(
-                                    &sudoku.squares[(outer_row * 27
-                                        + outer_col * 9
-                                        + inner_row * 3
-                                        + inner_col)
-                                        as usize]
-                                        .to_string(),
+                                    &sudoku.squares[sudoku::Sudoku::get_position(
+                                        cell::CellPosition::new(
+                                            outer_row as usize,
+                                            outer_col as usize,
+                                        ),
+                                        cell::CellPosition::new(
+                                            inner_row as usize,
+                                            inner_col as usize,
+                                        ),
+                                    )]
+                                    .to_string(),
                                 );
                             }
                             None => unreachable!(),
@@ -165,6 +174,31 @@ fn generate_grid() -> Grid {
     grid
 }
 
+fn solve(grid: &Grid, sudoku: &mut sudoku::Sudoku, window: &ApplicationWindow) {
+    match get_sudoku(grid) {
+        Ok(s) => *sudoku = s,
+        Err(e) => eprintln!("{}", e),
+    }
+    match sudoku.solve() {
+        Ok(s) => set_sudoku(&grid, s),
+        Err(e) => {
+            let dialog = MessageDialog::builder()
+                .transient_for(window)
+                .message_type(MessageType::Error)
+                .buttons(ButtonsType::Ok)
+                .text(e)
+                .modal(true)
+                .build();
+
+            dialog.connect_response(|dialog, _response| {
+                dialog.close();
+            });
+
+            dialog.show();
+        }
+    }
+}
+
 fn main() -> glib::ExitCode {
     let app = Application::builder()
         .application_id("org.huggepugge.sudoku_solver")
@@ -175,11 +209,14 @@ fn main() -> glib::ExitCode {
     }));
 
     app.connect_activate(move |app| {
-        let sudoku_clone = sudoku.clone();
-        let window = ApplicationWindow::builder()
-            .application(app)
-            .title("Sudoku Solver")
-            .build();
+        let sudoku = sudoku.clone();
+        let window = RefCell::new(
+            ApplicationWindow::builder()
+                .application(app)
+                .title("Sudoku Solver")
+                .build(),
+        );
+        let window_clone = window.clone();
 
         let css_provider = CssProvider::new();
         css_provider.load_from_file(&File::for_path("grid.css"));
@@ -194,21 +231,17 @@ fn main() -> glib::ExitCode {
         let grid = generate_grid();
         container.append(&grid);
 
-        let sudoku_propogate_sudoku = Button::builder().label("Backpropogate Sudoku").build();
+        let sudoku_propogate_sudoku = Button::builder().label("Solve Sudoku").build();
 
         sudoku_propogate_sudoku.connect_clicked(move |_| {
-            match get_sudoku(&grid) {
-                Ok(s) => *sudoku_clone.borrow_mut() = s,
-                Err(e) => eprintln!("{}", e),
-            }
-            set_sudoku(&grid, sudoku_clone.borrow_mut().back_prop());
+            solve(&grid, &mut sudoku.borrow_mut(), &window_clone.borrow())
         });
 
         container.append(&sudoku_propogate_sudoku);
 
-        window.set_child(Some(&container));
+        window.borrow().set_child(Some(&container));
 
-        window.present();
+        window.borrow().present();
     });
 
     app.run()
