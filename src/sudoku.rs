@@ -1,8 +1,67 @@
 use crate::cell::{Cell, CellPosition};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+struct BackProp {
+    position: usize,
+    numbers: Vec<u8>,
+}
+
+impl BackProp {
+    fn new() -> Self {
+        Self {
+            position: 0,
+            numbers: Vec::new(),
+        }
+    }
+
+    fn start(&mut self) {
+        self.numbers.push(0);
+    }
+
+    fn next(&mut self) -> Result<(u8, usize), &str> {
+        if self.numbers.len() == 0 {
+            return Err("Back propogation has not been started yet");
+        }
+        if self.numbers[0] == 0 {
+            self.numbers[0] += 1;
+        } else {
+            self.position += 1;
+            self.numbers.push(1);
+        }
+        Ok((self.numbers[self.position], self.position))
+    }
+
+    fn fail(&mut self) -> Result<(u8, usize, usize), &str> {
+        if self.numbers.len() == 0 {
+            return Err("Back propogation has not been started yet!");
+        }
+        if self.position == 0 {
+            return Err("Back propogation failed!");
+        }
+        let mut amount = 0;
+        if self.numbers[self.position] < 9 {
+            self.numbers[self.position] += 1;
+        } else {
+            self.position -= 1;
+            self.numbers.pop();
+            self.numbers[self.position] += 1;
+            amount += 1;
+            while self.numbers[self.position] > 9 {
+                self.position -= 1;
+                self.numbers.pop();
+                self.numbers[self.position] += 1;
+                amount += 1;
+            }
+        }
+        Ok((self.numbers[self.position], self.position, amount))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Sudoku {
-    pub squares: Vec<u8>,
+    pub cells: Vec<u8>,
+    back_prop: BackProp,
+    pub visualizer: bool,
 }
 
 impl std::fmt::Display for Sudoku {
@@ -10,7 +69,7 @@ impl std::fmt::Display for Sudoku {
         let mut grid = String::new();
         for row in 0..9 {
             for col in 0..9 {
-                grid += &format!("{} ", self.squares[row * 9 + col]);
+                grid += &format!("{} ", self.cells[row * 9 + col]);
             }
             grid += "\n";
         }
@@ -19,13 +78,21 @@ impl std::fmt::Display for Sudoku {
 }
 
 impl Sudoku {
+    pub fn new(cells: Vec<u8>) -> Self {
+        Self {
+            cells,
+            back_prop: BackProp::new(),
+            visualizer: false,
+        }
+    }
+
     pub fn get_rows(&self) -> Vec<Vec<u8>> {
         let mut rows = Vec::new();
         for _ in 0..9 {
             rows.push(Vec::new());
         }
         for cell in 0..81 {
-            rows[cell.get_row()].push(self.squares[cell]);
+            rows[cell.get_row()].push(self.cells[cell]);
         }
 
         rows
@@ -37,7 +104,7 @@ impl Sudoku {
             cols.push(Vec::new());
         }
         for cell in 0..81 {
-            cols[cell.get_col()].push(self.squares[cell]);
+            cols[cell.get_col()].push(self.cells[cell]);
         }
 
         cols
@@ -49,7 +116,7 @@ impl Sudoku {
             squares.push(Vec::new());
         }
         for cell in 0..81 {
-            squares[cell.get_square()].push(self.squares[cell]);
+            squares[cell.get_square()].push(self.cells[cell]);
         }
         squares
     }
@@ -58,22 +125,22 @@ impl Sudoku {
         square.get_position() * 3 + inner_coords.get_position()
     }
 
-    fn check(&self) -> bool {
+    pub fn check(&self) -> bool {
         for cell in 0..81 {
-            if self.squares[cell] != 0
+            if self.cells[cell] != 0
                 && (self.get_rows()[cell.get_row()]
                     .iter()
-                    .filter(|x| **x == self.squares[cell])
+                    .filter(|x| **x == self.cells[cell])
                     .count()
                     > 1
                     || self.get_cols()[cell.get_col()]
                         .iter()
-                        .filter(|x| **x == self.squares[cell])
+                        .filter(|x| **x == self.cells[cell])
                         .count()
                         > 1
                     || self.get_squares()[cell.get_square()]
                         .iter()
-                        .filter(|x| **x == self.squares[cell])
+                        .filter(|x| **x == self.cells[cell])
                         .count()
                         > 1)
             {
@@ -84,8 +151,11 @@ impl Sudoku {
     }
 
     fn back_prop_helper(&mut self, position: usize) -> Result<(), ()> {
-        if position >= 81 || self.squares[position] != 0 {
+        if position >= 81 {
             return Ok(());
+        }
+        if self.cells[position] != 0 {
+            return self.back_prop_helper(position + 1);
         }
         for number in 1..=9 {
             if self.get_rows()[position.get_row()]
@@ -101,14 +171,14 @@ impl Sudoku {
                     .find(|x| **x == number)
                     .is_none()
             {
-                self.squares[position] = number;
+                self.cells[position] = number;
                 if self.back_prop_helper(position + 1).is_ok() {
                     return Ok(());
                 }
-                self.squares[position] = 0;
+                self.cells[position] = 0;
             }
         }
-        self.squares[position] = 0;
+        self.cells[position] = 0;
         Err(())
     }
 
@@ -116,12 +186,39 @@ impl Sudoku {
         if !self.check() {
             return Err("Sudoku is not solvable!");
         }
-        let mut new_sudoku = Sudoku {
-            squares: self.squares.clone(),
-        };
+        let mut new_sudoku = self.clone();
         match new_sudoku.back_prop_helper(0) {
             Ok(()) => Ok(new_sudoku),
             Err(()) => Err("Sudoku is not solvable!"),
         }
+    }
+
+    pub fn back_prop_next_step(&mut self) -> Result<(), &str> {
+        if self.back_prop.numbers.len() == 0 {
+            self.back_prop.start();
+        }
+        if self.check() {
+            if self.back_prop.numbers.len() == 81 {
+                self.visualizer = false;
+            } else {
+                match self.back_prop.next() {
+                    Ok((number, position)) => {
+                        self.cells[position] = number;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        } else {
+            match self.back_prop.fail() {
+                Ok((number, position, amount)) => {
+                    self.cells[position] = number;
+                    for pos in (position + 1)..(position + 1 + amount) {
+                        self.cells[pos] = 0;
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
 }
