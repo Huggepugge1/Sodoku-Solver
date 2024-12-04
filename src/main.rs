@@ -61,6 +61,51 @@ fn get_sudoku(grid: &Grid) -> Result<sudoku::Sudoku, ParseIntError> {
     Ok(sudoku::Sudoku { squares })
 }
 
+fn set_sudoku(grid: &Grid, sudoku: sudoku::Sudoku) {
+    let mut squares = Vec::with_capacity(81);
+    for _ in 0..81 {
+        squares.push(0);
+    }
+    for outer_row in 0..3 {
+        for outer_col in 0..3 {
+            let inner_grid = match grid.child_at(outer_row, outer_col) {
+                Some(grid) => match grid.downcast_ref::<Frame>() {
+                    Some(frame) => match frame.child() {
+                        Some(frame) => match frame.downcast_ref::<Grid>() {
+                            Some(grid) => grid,
+                            None => unreachable!(),
+                        }
+                        .clone(),
+                        None => unreachable!(),
+                    },
+                    None => unreachable!(),
+                },
+                None => unreachable!(),
+            };
+            for inner_row in 0..3 {
+                for inner_col in 0..3 {
+                    match inner_grid.child_at(inner_row, inner_col) {
+                        Some(entry) => match entry.downcast_ref::<Entry>() {
+                            Some(entry) => {
+                                entry.set_text(
+                                    &sudoku.squares[(outer_row * 27
+                                        + outer_col * 9
+                                        + inner_row * 3
+                                        + inner_col)
+                                        as usize]
+                                        .to_string(),
+                                );
+                            }
+                            None => unreachable!(),
+                        },
+                        None => unreachable!(),
+                    };
+                }
+            }
+        }
+    }
+}
+
 fn generate_grid() -> Grid {
     let grid = Grid::builder()
         .column_spacing(10)
@@ -149,17 +194,17 @@ fn main() -> glib::ExitCode {
         let grid = generate_grid();
         container.append(&grid);
 
-        let sudoku_generate_button = Button::builder().label("Generate Sudoku").build();
+        let sudoku_propogate_sudoku = Button::builder().label("Backpropogate Sudoku").build();
 
-        sudoku_generate_button.connect_clicked(move |_| {
+        sudoku_propogate_sudoku.connect_clicked(move |_| {
             match get_sudoku(&grid) {
                 Ok(s) => *sudoku_clone.borrow_mut() = s,
                 Err(e) => eprintln!("{}", e),
             }
-            println!("{:?}", sudoku_clone);
+            set_sudoku(&grid, sudoku_clone.borrow_mut().back_prop());
         });
 
-        container.append(&sudoku_generate_button);
+        container.append(&sudoku_propogate_sudoku);
 
         window.set_child(Some(&container));
 
